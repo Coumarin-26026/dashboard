@@ -120,7 +120,22 @@ fi
 # Install init scripts
 
 if [ -d /www/vwrt/services/init.d ]; then
-echo "[+] Installing services..."
+    echo "[+] Installing services..."
+
+    cp -f /www/vwrt/services/init.d/* /etc/init.d/ 2>/dev/null || true
+
+    chmod +x /etc/init.d/mobile_poller 2>/dev/null || true
+    chmod +x /etc/init.d/sms_sync 2>/dev/null || true
+    chmod +x /etc/init.d/vwrt_watchdog 2>/dev/null || true
+
+    /etc/init.d/mobile_poller enable 2>/dev/null || true
+    /etc/init.d/sms_sync enable 2>/dev/null || true
+    /etc/init.d/vwrt_watchdog enable 2>/dev/null || true
+
+    /etc/init.d/mobile_poller start 2>/dev/null || true
+    /etc/init.d/sms_sync start 2>/dev/null || true
+    /etc/init.d/vwrt_watchdog start 2>/dev/null || true
+fi
 
 ```
 cp -f /www/vwrt/services/init.d/* /etc/init.d/ 2>/dev/null || true
