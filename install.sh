@@ -6,77 +6,72 @@ REPO="https://raw.githubusercontent.com/Coumarin-26026/dashboard/main/vwrt.zip"
 TMP="/tmp/vwrt-installer"
 
 echo "========================================="
-echo " VWRT Dashboard Installer for Coumarin "
+echo " VWRT Dashboard Installer"
 echo "========================================="
 echo
 
-# Root check
+# Check root
 
-if [ "$(id -u)" != "0" ]; then
-echo "ERROR: Please run as root"
+[ "$(id -u)" = "0" ] || {
+echo "ERROR: Run as root"
 exit 1
-fi
+}
 
-# OpenWrt check
+# Check firmware
 
-if [ ! -f /etc/openwrt_release ]; then
-echo "ERROR: OpenWrt/Coumarin not detected"
+[ -f /etc/openwrt_release ] || {
+echo "ERROR: OpenWrt/Coumarin not found"
 exit 1
-fi
+}
 
-echo "[+] Firmware:"
+echo "[+] Firmware detected:"
 grep DISTRIB_DESCRIPTION /etc/openwrt_release || true
 
-# Install dependencies if needed
+# Check tools
 
-for pkg in wget unzip; do
-if ! command -v $pkg >/dev/null 2>&1; then
-echo "[+] Installing $pkg ..."
-apk add $pkg || true
-fi
+for cmd in wget unzip; do
+command -v "$cmd" >/dev/null 2>&1 || {
+echo "ERROR: Missing $cmd"
+exit 1
+}
 done
 
-# Prepare workspace
+# Workspace
 
-echo "[+] Cleaning workspace..."
+echo "[+] Preparing..."
 rm -rf "$TMP"
 mkdir -p "$TMP"
 
-# Download package
+# Download
 
-echo "[+] Downloading VWRT package..."
+echo "[+] Downloading package..."
 wget --no-check-certificate -O "$TMP/vwrt.zip" "$REPO"
 
-# Verify download
-
-if [ ! -f "$TMP/vwrt.zip" ]; then
+[ -f "$TMP/vwrt.zip" ] || {
 echo "ERROR: Download failed"
 exit 1
-fi
+}
 
 SIZE=$(wc -c < "$TMP/vwrt.zip")
 
-if [ "$SIZE" -lt 10000 ]; then
-echo "ERROR: Invalid ZIP file"
+[ "$SIZE" -gt 10000 ] || {
+echo "ERROR: Invalid ZIP"
 exit 1
-fi
+}
 
-echo "[+] Downloaded $SIZE bytes"
+echo "[+] ZIP size: $SIZE bytes"
 
 # Extract
 
 echo "[+] Extracting..."
-unzip -o "$TMP/vwrt.zip" -d "$TMP" >/dev/null
-
-# Find dashboard source
+unzip -oq "$TMP/vwrt.zip" -d "$TMP"
 
 SRC=$(find "$TMP" -name dashboard.html | head -n1 | xargs dirname)
 
-if [ -z "$SRC" ]; then
+[ -n "$SRC" ] || {
 echo "ERROR: dashboard.html not found"
-find "$TMP" -type f | head
 exit 1
-fi
+}
 
 echo "[+] Source: $SRC"
 
@@ -84,107 +79,107 @@ echo "[+] Source: $SRC"
 
 if [ -d /www/vwrt ]; then
 rm -rf /tmp/vwrt-backup
-cp -a /www/vwrt /tmp/vwrt-backup 2>/dev/null || true
+cp -a /www/vwrt /tmp/vwrt-backup || true
 fi
 
 # Stop services
 
 for svc in mobile_poller sms_sync vwrt_watchdog; do
-if [ -x "/etc/init.d/$svc" ]; then
-/etc/init.d/$svc stop || true
-fi
+[ -x "/etc/init.d/$svc" ] && /etc/init.d/$svc stop || true
 done
 
-# Install files
+# Install
 
-echo "[+] Installing dashboard..."
+echo "[+] Installing files..."
+
 mkdir -p /www/vwrt
 rm -rf /www/vwrt/*
 cp -rf "$SRC"/* /www/vwrt/
 
-# Remove dev files
+# Remove development files
 
-rm -rf /www/vwrt/.git*
+rm -rf /www/vwrt/.git
+rm -rf /www/vwrt/.github
 rm -rf /www/vwrt/.vscode
 rm -rf /www/vwrt/dist
-rm -f /www/vwrt/.DS_Store
 
 # Permissions
 
 chmod -R 755 /www/vwrt
 
-find /www/vwrt/cgi-bin -type f -exec chmod +x {} ; 2>/dev/null || true
+[ -d /www/vwrt/cgi-bin ] && chmod -R 755 /www/vwrt/cgi-bin
+[ -d /www/vwrt/services ] && chmod -R 755 /www/vwrt/services
 
-# Install services
+# Install init scripts
 
 if [ -d /www/vwrt/services/init.d ]; then
 
 ```
-echo "[+] Installing init.d services..."
+echo "[+] Installing services..."
 
-cp -f /www/vwrt/services/init.d/* /etc/init.d/
+cp -f /www/vwrt/services/init.d/* /etc/init.d/ 2>/dev/null || true
 
-chmod +x /etc/init.d/mobile_poller 2>/dev/null || true
-chmod +x /etc/init.d/sms_sync 2>/dev/null || true
-chmod +x /etc/init.d/vwrt_watchdog 2>/dev/null || true
+for svc in mobile_poller sms_sync vwrt_watchdog; do
+    [ -f "/etc/init.d/$svc" ] || continue
 
-/etc/init.d/mobile_poller enable 2>/dev/null || true
-/etc/init.d/sms_sync enable 2>/dev/null || true
-/etc/init.d/vwrt_watchdog enable 2>/dev/null || true
+    chmod +x "/etc/init.d/$svc"
+
+    /etc/init.d/$svc enable || true
+done
 ```
 
 fi
 
-# LuCI integration
-
-echo "[+] Creating LuCI links..."
+# LuCI links
 
 mkdir -p /www/vwrt/cgi-bin
 
+[ -d /www/luci-static ] && 
 ln -snf /www/luci-static /www/vwrt/luci-static
 
-if [ -f /www/cgi-bin/luci ]; then
+[ -f /www/cgi-bin/luci ] && 
 ln -snf /www/cgi-bin/luci /www/vwrt/cgi-bin/luci
-fi
 
-# Configure uhttpd
+# uhttpd
 
+if command -v uci >/dev/null 2>&1; then
+
+```
 echo "[+] Configuring uhttpd..."
 
 uci set uhttpd.main.home='/www/vwrt'
 uci commit uhttpd
 
-/etc/init.d/uhttpd restart
+/etc/init.d/uhttpd restart || true
+```
+
+fi
 
 # Start services
 
-echo "[+] Starting services..."
-
 for svc in mobile_poller sms_sync vwrt_watchdog; do
-if [ -x "/etc/init.d/$svc" ]; then
+[ -x "/etc/init.d/$svc" ] && 
 /etc/init.d/$svc restart || true
-fi
 done
 
 # Cleanup
 
 rm -rf "$TMP"
 
+echo
+echo "========================================="
+echo " Installation completed "
+echo "========================================="
+echo
+
 LAN_IP=$(uci -q get network.lan.ipaddr)
 
-echo
-echo "========================================="
-echo " Installation completed"
-echo "========================================="
-
 if [ -n "$LAN_IP" ]; then
-echo
-echo "Dashboard URL:"
+echo "Dashboard:"
 echo "http://$LAN_IP"
 fi
 
 echo
-echo "Useful commands:"
+echo "Check status:"
 echo "logread | grep -Ei 'mobile|sms|vwrt'"
-echo "ps | grep -E 'mobile_poller|sms_sync'"
 echo
