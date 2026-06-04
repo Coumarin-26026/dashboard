@@ -10,70 +10,72 @@ echo " VWRT Dashboard Installer"
 echo "========================================="
 echo
 
-# Check root
+# Root check
 
-[ "$(id -u)" = "0" ] || {
+if [ "$(id -u)" != "0" ]; then
 echo "ERROR: Run as root"
 exit 1
-}
+fi
 
-# Check firmware
+# Firmware check
 
-[ -f /etc/openwrt_release ] || {
+if [ ! -f /etc/openwrt_release ]; then
 echo "ERROR: OpenWrt/Coumarin not found"
 exit 1
-}
+fi
 
 echo "[+] Firmware detected:"
 grep DISTRIB_DESCRIPTION /etc/openwrt_release || true
 
-# Check tools
+# Required tools
 
 for cmd in wget unzip; do
-command -v "$cmd" >/dev/null 2>&1 || {
+if ! command -v "$cmd" >/dev/null 2>&1; then
 echo "ERROR: Missing $cmd"
 exit 1
-}
+fi
 done
-
-# Workspace
 
 echo "[+] Preparing..."
 rm -rf "$TMP"
 mkdir -p "$TMP"
 
-# Download
-
 echo "[+] Downloading package..."
 wget --no-check-certificate -O "$TMP/vwrt.zip" "$REPO"
 
-[ -f "$TMP/vwrt.zip" ] || {
+if [ ! -f "$TMP/vwrt.zip" ]; then
 echo "ERROR: Download failed"
 exit 1
-}
+fi
 
 SIZE=$(wc -c < "$TMP/vwrt.zip")
 
-[ "$SIZE" -gt 10000 ] || {
+if [ "$SIZE" -lt 10000 ]; then
 echo "ERROR: Invalid ZIP"
 exit 1
-}
+fi
 
 echo "[+] ZIP size: $SIZE bytes"
-
-# Extract
 
 echo "[+] Extracting..."
 unzip -oq "$TMP/vwrt.zip" -d "$TMP"
 
-SRC=$(find "$TMP" -name dashboard.html | head -n1 | xargs dirname)
+SRC=$(find "$TMP" -name dashboard.html | head -n 1 | xargs dirname)
 
-[ -n "$SRC" ] || {
+if [ -z "$SRC" ]; then
 echo "ERROR: dashboard.html not found"
 exit 1
-}
+fi
 
 echo "[+] Source: $SRC"
+
+# Compatibility check
+
+if command -v mmcli >/dev/null 2>&1; then
+echo "[+] ModemManager detected"
+else
+echo "[!] ModemManager not found"
+fi
 
 # Backup
 
@@ -85,10 +87,10 @@ fi
 # Stop services
 
 for svc in mobile_poller sms_sync vwrt_watchdog; do
-[ -x "/etc/init.d/$svc" ] && /etc/init.d/$svc stop || true
+if [ -x "/etc/init.d/$svc" ]; then
+/etc/init.d/$svc stop || true
+fi
 done
-
-# Install
 
 echo "[+] Installing files..."
 
@@ -107,79 +109,54 @@ rm -rf /www/vwrt/dist
 
 chmod -R 755 /www/vwrt
 
-[ -d /www/vwrt/cgi-bin ] && chmod -R 755 /www/vwrt/cgi-bin
-[ -d /www/vwrt/services ] && chmod -R 755 /www/vwrt/services
+if [ -d /www/vwrt/cgi-bin ]; then
+chmod -R 755 /www/vwrt/cgi-bin
+fi
+
+if [ -d /www/vwrt/services ]; then
+chmod -R 755 /www/vwrt/services
+fi
 
 # Install init scripts
 
 if [ -d /www/vwrt/services/init.d ]; then
-
-```
 echo "[+] Installing services..."
 
+```
 cp -f /www/vwrt/services/init.d/* /etc/init.d/ 2>/dev/null || true
 
-for svc in mobile_poller sms_sync vwrt_watchdog; do
-    [ -f "/etc/init.d/$svc" ] || continue
+chmod +x /etc/init.d/mobile_poller 2>/dev/null || true
+chmod +x /etc/init.d/sms_sync 2>/dev/null || true
+chmod +x /etc/init.d/vwrt_watchdog 2>/dev/null || true
 
-    chmod +x "/etc/init.d/$svc"
+/etc/init.d/mobile_poller enable 2>/dev/null || true
+/etc/init.d/sms_sync enable 2>/dev/null || true
+/etc/init.d/vwrt_watchdog enable 2>/dev/null || true
 
-    /etc/init.d/$svc enable || true
-done
+/etc/init.d/mobile_poller start 2>/dev/null || true
+/etc/init.d/sms_sync start 2>/dev/null || true
+/etc/init.d/vwrt_watchdog start 2>/dev/null || true
 ```
 
 fi
 
-# LuCI links
+# LuCI symlinks
 
-mkdir -p /www/vwrt/cgi-bin
-
-[ -d /www/luci-static ] && 
 ln -snf /www/luci-static /www/vwrt/luci-static
-
-[ -f /www/cgi-bin/luci ] && 
 ln -snf /www/cgi-bin/luci /www/vwrt/cgi-bin/luci
 
 # uhttpd
 
 if command -v uci >/dev/null 2>&1; then
-
-```
-echo "[+] Configuring uhttpd..."
-
 uci set uhttpd.main.home='/www/vwrt'
 uci commit uhttpd
-
 /etc/init.d/uhttpd restart || true
-```
-
-fi
-
-# Start services
-
-for svc in mobile_poller sms_sync vwrt_watchdog; do
-[ -x "/etc/init.d/$svc" ] && 
-/etc/init.d/$svc restart || true
-done
-
-# Cleanup
-
-rm -rf "$TMP"
-
-echo
-echo "========================================="
-echo " Installation completed "
-echo "========================================="
-echo
-
-LAN_IP=$(uci -q get network.lan.ipaddr)
-
-if [ -n "$LAN_IP" ]; then
-echo "Dashboard:"
-echo "http://$LAN_IP"
 fi
 
 echo
-echo "Check status:"
-echo "logread | grep -Ei 'mobile|sms|vwrt'"
+echo "========================================="
+echo " Installation completed"
+echo "========================================="
+echo
+echo "Dashboard: http://$(uci -q get network.lan.ipaddr || echo 192.168.1.1)/"
 echo
