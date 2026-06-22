@@ -10,25 +10,25 @@ echo " VWRT Dashboard Installer"
 echo "========================================="
 echo
 
-# Check root
+# Root check
 
-[ "$(id -u)" = "0" ] || {
+if [ "$(id -u)" != "0" ]; then
 echo "ERROR: Run as root"
 exit 1
-}
+fi
 
-# Check firmware
+# Firmware check
 
-[ -f /etc/openwrt_release ] || {
+if [ ! -f /etc/openwrt_release ]; then
 echo "ERROR: OpenWrt/Coumarin not found"
 exit 1
-}
+fi
 
-echo "[+] Firmware detected:"
+echo "[+] Firmware:"
 grep DISTRIB_DESCRIPTION /etc/openwrt_release || true
 echo
 
-# Check tools
+# Required tools
 
 for cmd in wget unzip; do
 command -v "$cmd" >/dev/null 2>&1 || {
@@ -39,26 +39,23 @@ done
 
 # Workspace
 
-echo "[+] Preparing..."
 rm -rf "$TMP"
 mkdir -p "$TMP"
-
-# Download
 
 echo "[+] Downloading package..."
 wget --no-check-certificate -O "$TMP/vwrt.zip" "$REPO"
 
-[ -f "$TMP/vwrt.zip" ] || {
+[ -s "$TMP/vwrt.zip" ] || {
 echo "ERROR: Download failed"
 exit 1
 }
 
 SIZE=$(wc -c < "$TMP/vwrt.zip")
 
-[ "$SIZE" -gt 10000 ] || {
+if [ "$SIZE" -lt 10000 ]; then
 echo "ERROR: Invalid ZIP"
 exit 1
-}
+fi
 
 echo "[+] ZIP size: $SIZE bytes"
 
@@ -67,19 +64,19 @@ echo "[+] ZIP size: $SIZE bytes"
 echo "[+] Extracting..."
 unzip -oq "$TMP/vwrt.zip" -d "$TMP"
 
-SRC=$(find "$TMP" -name dashboard.html | head -n1 | xargs dirname)
+SRC="$(find "$TMP" -name dashboard.html | head -n1 | xargs dirname)"
 
-[ -n "$SRC" ] || {
-echo "ERROR: dashboard.html not found"
+if [ -z "$SRC" ] || [ ! -d "$SRC" ]; then
+echo "ERROR: dashboard source not found"
 exit 1
-}
+fi
 
 echo "[+] Source: $SRC"
 
 # Backup
 
 if [ -d /www/vwrt ]; then
-echo "[+] Backing up existing installation..."
+echo "[+] Backup existing installation..."
 rm -rf /tmp/vwrt-backup
 cp -a /www/vwrt /tmp/vwrt-backup || true
 fi
@@ -90,27 +87,13 @@ for svc in mobile_poller sms_sync vwrt_watchdog; do
 [ -x "/etc/init.d/$svc" ] && /etc/init.d/$svc stop || true
 done
 
-# Install files
-
-echo "[+] Installing files..."
+echo "[+] Installing dashboard..."
 
 mkdir -p /www/vwrt
 rm -rf /www/vwrt/*
-cp -rf "$SRC"/* /www/vwrt/
+cp -a "$SRC"/. /www/vwrt/
 
-# Install CGI to system CGI directory
-
-if [ -d "$SRC/cgi-bin" ]; then
-    echo "[+] Installing CGI..."
-
-    mkdir -p /www/cgi-bin
-
-    cp -rf "$SRC/cgi-bin/"* /www/cgi-bin/
-
-    chmod -R 755 /www/cgi-bin
-fi
-
-# Remove development files
+# Cleanup development files
 
 rm -rf /www/vwrt/.git
 rm -rf /www/vwrt/.github
@@ -121,32 +104,30 @@ rm -rf /www/vwrt/dist
 
 chmod -R 755 /www/vwrt
 
-[ -d /www/vwrt/cgi-bin ] && chmod -R 755 /www/vwrt/cgi-bin
-[ -d /www/vwrt/services ] && chmod -R 755 /www/vwrt/services
+# Install CGI
 
-# Install init scripts
+if [ -d "$SRC/cgi-bin" ]; then
+echo "[+] Installing CGI..."
 
-if [ -d /www/vwrt/services/init.d ]; then
 
-```
-echo "[+] Installing services..."
+mkdir -p /www/cgi-bin
 
-cp -f /www/vwrt/services/init.d/* /etc/init.d/ 2>/dev/null || true
+for d in "$SRC"/cgi-bin/*; do
+    name="$(basename "$d")"
 
-for svc in mobile_poller sms_sync vwrt_watchdog; do
+    # Never replace LuCI
+    [ "$name" = "luci" ] && continue
 
-    [ -f "/etc/init.d/$svc" ] || continue
-
-    chmod +x "/etc/init.d/$svc"
-
-    /etc/init.d/$svc enable 2>/dev/null || true
-
+    rm -rf "/www/cgi-bin/$name"
+    cp -a "$d" /www/cgi-bin/
 done
-```
+
+chmod -R 755 /www/cgi-bin
+
 
 fi
 
-# LuCI links
+# LuCI compatibility links
 
 mkdir -p /www/vwrt/cgi-bin
 
@@ -158,9 +139,26 @@ if [ -f /www/cgi-bin/luci ]; then
 ln -snf /www/cgi-bin/luci /www/vwrt/cgi-bin/luci
 fi
 
-# Detect webserver
+# Install services
 
-echo "[+] Detecting webserver..."
+if [ -d /www/vwrt/services/init.d ]; then
+
+
+echo "[+] Installing services..."
+
+cp -f /www/vwrt/services/init.d/* /etc/init.d/ 2>/dev/null || true
+
+for svc in mobile_poller sms_sync vwrt_watchdog; do
+    [ -f "/etc/init.d/$svc" ] || continue
+
+    chmod +x "/etc/init.d/$svc"
+
+    /etc/init.d/$svc enable 2>/dev/null || true
+done
+
+fi
+
+# Detect web server
 
 if pidof nginx >/dev/null 2>&1; then
 WEBSERVER="nginx"
@@ -170,66 +168,54 @@ else
 WEBSERVER="none"
 fi
 
-echo "[+] Current webserver: $WEBSERVER"
-
-# Switch nginx -> uhttpd
-
-if [ "$WEBSERVER" = "nginx" ]; then
-
-```
-echo "[+] nginx detected"
-echo "[+] Switching to uhttpd..."
-
-if command -v apk >/dev/null 2>&1; then
-    apk add uhttpd >/dev/null 2>&1 || true
-fi
-
-/etc/init.d/nginx stop 2>/dev/null || true
-/etc/init.d/nginx disable 2>/dev/null || true
-
-/etc/init.d/uhttpd enable 2>/dev/null || true
-```
-
-fi
+echo "[+] Web server: $WEBSERVER"
 
 # Configure uhttpd
 
 if command -v uci >/dev/null 2>&1; then
 
-```
+
 echo "[+] Configuring uhttpd..."
 
-uci set uhttpd.main.home='/www/vwrt'
+uci set uhttpd.main.home='/www'
 uci set uhttpd.main.cgi_prefix='/cgi-bin'
+
+if [ "$WEBSERVER" = "nginx" ]; then
+    uci set uhttpd.main.listen_http='0.0.0.0:8081'
+    uci set uhttpd.main.listen_https='0.0.0.0:8443'
+fi
+
 uci commit uhttpd
 
 /etc/init.d/uhttpd restart || true
-```
+
 
 fi
+
+sleep 2
 
 # Start services
 
 for svc in mobile_poller sms_sync vwrt_watchdog; do
-
-```
 if [ -x "/etc/init.d/$svc" ]; then
-    /etc/init.d/$svc start 2>/dev/null || true
+/etc/init.d/$svc start 2>/dev/null || true
 fi
-```
-
 done
 
-sleep 2
+# API test
 
-# CGI test
+PORT=80
 
-echo "[+] Testing CGI..."
+if [ "$WEBSERVER" = "nginx" ]; then
+PORT=8081
+fi
 
-if wget -qO- http://127.0.0.1/cgi-bin/csrf/get >/dev/null 2>&1; then
-    echo "[OK] CGI working"
+echo "[+] Testing API..."
+
+if wget -qO- "[http://127.0.0.1:$PORT/cgi-bin/csrf/get](http://127.0.0.1:$PORT/cgi-bin/csrf/get)" >/dev/null 2>&1; then
+echo "[OK] CGI working"
 else
-    echo "[WARNING] CGI test failed"
+echo "[WARNING] CGI test failed"
 fi
 
 # Cleanup
@@ -237,11 +223,32 @@ fi
 rm -rf "$TMP"
 
 IP="$(uci -q get network.lan.ipaddr 2>/dev/null)"
-
 [ -n "$IP" ] || IP="192.168.1.1"
 
 echo
-echo "[+] Installation completed"
-echo "[+] Dashboard: http://$IP/dashboard.html"
-echo "[+] API Test : http://$IP/cgi-bin/system/info"
+echo "========================================="
+echo " Installation Complete"
+echo "========================================="
+
+if [ "$WEBSERVER" = "nginx" ]; then
+echo "Dashboard:"
+echo "http://$IP:8081/vwrt/dashboard.html"
+
+
+echo
+echo "API:"
+echo "http://$IP:8081/cgi-bin/system/info"
+
+
+else
+echo "Dashboard:"
+echo "http://$IP/vwrt/dashboard.html"
+
+
+echo
+echo "API:"
+echo "http://$IP/cgi-bin/system/info"
+
+fi
+
 echo
