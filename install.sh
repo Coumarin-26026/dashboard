@@ -98,6 +98,18 @@ mkdir -p /www/vwrt
 rm -rf /www/vwrt/*
 cp -rf "$SRC"/* /www/vwrt/
 
+# Install CGI to system CGI directory
+
+if [ -d "$SRC/cgi-bin" ]; then
+    echo "[+] Installing CGI..."
+
+    mkdir -p /www/cgi-bin
+
+    cp -rf "$SRC/cgi-bin/"* /www/cgi-bin/
+
+    chmod -R 755 /www/cgi-bin
+fi
+
 # Remove development files
 
 rm -rf /www/vwrt/.git
@@ -214,10 +226,10 @@ sleep 2
 
 echo "[+] Testing CGI..."
 
-if wget -qO- http://127.0.0.1/cgi-bin/system/version >/dev/null 2>&1; then
-echo "[OK] CGI working"
+if wget -qO- http://127.0.0.1/cgi-bin/csrf/get >/dev/null 2>&1; then
+    echo "[OK] CGI working"
 else
-echo "[WARNING] CGI test failed"
+    echo "[WARNING] CGI test failed"
 fi
 
 # Cleanup
